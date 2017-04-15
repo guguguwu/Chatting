@@ -1,6 +1,8 @@
+// Classes for handling IPv4 address
 import java.io.IOException;
 import java.net.InetSocketAddress;
 
+// Classes for asynchronous server-side channel
 import java.nio.ByteOrder;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousServerSocketChannel;
@@ -14,18 +16,22 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 
-import java.util.concurrent.ConcurrentLinkedDeque;
+// Classes for inner containers
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-import java.util.ArrayList;
+// Classes for logging
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class Server implements Callable<Boolean> {
+public class Server {
 
     private class NetworkConnection {
     	
     	private AsynchronousSocketChannel channel;
+    	private Future<Integer> readFuture;
     	private long id;
     	
     	public NetworkConnection(AsynchronousSocketChannel chan) throws IOException {
@@ -47,6 +53,8 @@ public class Server implements Callable<Boolean> {
     		bb = null;
     	}
     	
+    	// Given unique identification number must not be modified.
+    	// So we don't need to implement set method.
     	public long getId() { return this.id; }
     	
     	public boolean isOpen() {
@@ -57,28 +65,29 @@ public class Server implements Callable<Boolean> {
     		this.channel.write(a.getMessageAsByteBuffer());
     	}
     	
-    	protected void finalize() throws Throwable {
+    	public void closeChannel() {
     		try {
     			this.channel.close();
-    		} finally {
-    			this.channel = null;
+    		} catch (IOException e) {
+    			Logger.getGlobal().log(Level.SEVERE, "Error occurred on closing socketchannel: ", e.getMessage());
     		}
     	}
     	
     }
 	
+    
     // broadcaster
     private class Broadcaster implements Callable<Boolean> {
 
     	private Boolean isTerminatedNormally = Boolean.TRUE;
 
     	// Reference pointer for accessing
-    	private ArrayList<NetworkConnection> 		clients;
-    	private ConcurrentLinkedQueue<AudioData> 	queue;
+    	private Map<Long, NetworkConnection> 	clients;
+    	private Queue<AudioData> 				queue;
 
     	public Broadcaster(
-    			ArrayList<NetworkConnection> clients,
-    			ConcurrentLinkedQueue<AudioData> queue) {
+    			Map<Long, NetworkConnection> clients,
+    			Queue<AudioData> queue) {
     		this.clients = clients;
     		this.queue = queue;
     	}
@@ -86,50 +95,69 @@ public class Server implements Callable<Boolean> {
 		@Override
 		public Boolean call() throws Exception {
 			
+            Logger.getGlobal().log(Level.INFO,
+            	"Server started broadcasting received audio data.");
+			
 			while (isAlive) {
-				NetworkConnection client;
 				AudioData dataMustBeSent = this.queue.poll();
-
-				// Descending order due to obtaining performance
-				for (int i = this.clients.size() - 1 ; 0 <= i ; i--) {
-					client = this.clients.get(i);
-					
-					if (client.isOpen() &&
-							dataMustBeSent.getId() != client.id) client.send(dataMustBeSent);
-					else this.clients.remove(i);
-				}
+				this.clients.forEach((id, nc) -> {
+					if (nc.isOpen()) {
+						if (dataMustBeSent.getId() != id) nc.send(dataMustBeSent);
+					}
+					else this.clients.remove(id);
+				});
+				
+				/* deactivated
+				 * 
+					NetworkConnection client;
+					// Descending order due to obtaining performance
+					for (int i = this.clients.size() - 1 ; 0 <= i ; i--) {
+						client = this.clients.get(i);
+						
+						if (client.isOpen() &&
+								dataMustBeSent.getId() != client.id) client.send(dataMustBeSent);
+						else this.clients.remove(i);
+					}
+				*/
 			}
 			
 			return this.isTerminatedNormally;
 		}
+		
+		@Override
+		protected void finalize() throws Throwable {
+			this.isTerminatedNormally = null;
+			this.clients = null;
+			this.queue	 = null;
+			
+			super.finalize();
+		}
     	
     }
     
-	// Using ArrayList is more beneficial in common situations,
-    // But in this situation we need to use ConcurrentLinkedDeque for assuring concurrency.
-	// ref.) http://stackoverflow.com/questions/322715/when-to-use-linkedlist-over-arraylist
-    
-    //private ConcurrentLinkedDeque<NetworkConnection> clients
-    //	= new ConcurrentLinkedDeque<NetworkConnection>();
-    private ArrayList<NetworkConnection> clients = new ArrayList<NetworkConnection>();
+	// Using ArrayList rather than LinkedList is more beneficial in common situations,
+    // (ref.) http://stackoverflow.com/questions/322715/when-to-use-linkedlist-over-arraylist)
+    // But in this situation I'd use ConcurrentHashMap.
+    private Map<Long, NetworkConnection> clients;
     
     // I decided to use ConcurrentLinkedQueue instead of LinkedTransferQueue.
     // (LinkedTransferQueue is blocking queue)
     // perf. ref.) https://gist.github.com/normanmaurer/3180812
-    private ConcurrentLinkedQueue<AudioData> broadcastQueue
-    	= new ConcurrentLinkedQueue<AudioData>();
+    private Queue<AudioData> broadcastQueue;
 
     private AsynchronousServerSocketChannel sSockChan;
     private boolean isAlive = true;
     private int 	port;
     
-    public Server(int port) { this.port = port; }
+    public Server(int port) {
+    	this.port = port;
+    }
     public int getPort() 	{ return this.port; }
     
-    @Override
-    public Boolean call() throws Exception {
-    	
+    public boolean start() {
         try {
+        	this.clients 		= new ConcurrentHashMap<Long, NetworkConnection>();
+        	this.broadcastQueue = new ConcurrentLinkedQueue<AudioData>();
         	
         	this.sSockChan = AsynchronousServerSocketChannel.open().bind(new InetSocketAddress(this.port));
         	this.sSockChan.accept(null, new CompletionHandler<AsynchronousSocketChannel, Void> () {
@@ -137,49 +165,53 @@ public class Server implements Callable<Boolean> {
 	            @Override
 	            public void completed(AsynchronousSocketChannel ch, Void attachment) {
 	            	
+					
+	            	
 	            	// Allocate receiving data buffer, and handle this connection
 	            	Logger.getGlobal().log(Level.INFO, "Established a connection ");
 					try {
-						clients.add(new NetworkConnection(ch));
+						NetworkConnection nc = new NetworkConnection(ch);
+						clients.putIfAbsent(nc.getId(), nc);
+						
+		            	ByteBuffer buf = ByteBuffer.allocate(88200);
+		            	ch.read(buf, attachment, new CompletionHandler<Integer, Void>() {
+		            		
+		            		@Override
+		            		public void completed(Integer res, Void attachment) {
+
+		            			// End of Stream ; connection is disconnected
+		            			if (res < 0) {
+		            				
+		            			}
+		            			else {
+		            				// If there is any read data, copy it to the broadcast queue
+		            				if (1 < res) {
+		            					broadcastQueue.offer(new AudioData(buf));
+		            					buf.clear();
+		            				}
+		            				
+		            				// Continue reading data on channel
+		            				ch.read(buf, attachment, this);
+		            			}
+		            		}
+		            			
+		            		@Override
+		            		public void failed(Throwable exc, Void attachment) {
+		            			if (isAlive && exc instanceof ClosedChannelException) {
+		            				Logger.getGlobal().log(Level.INFO,
+		    	            			"A channel connection was closed", exc.getMessage());
+		            				clients.remove(ch);
+		            			}
+		            			else Logger.getGlobal().log(Level.SEVERE,
+		            				"Error on reading data with a client", exc.getMessage());
+		            		}
+		            	});
+						
 					} catch (IOException e) {
 						Logger.getGlobal().log(Level.SEVERE,
 	            			"Error on receiving remote address of connection", e.getMessage());
 					}
 					
-	            	ByteBuffer buf = ByteBuffer.allocate(88200);
-	            	ch.read(buf, attachment, new CompletionHandler<Integer, Void>() {
-	            	
-	            		@Override
-	            		public void completed(Integer res, Void attachment) {
-
-	            			// End of Stream ; connection is disconnected
-	            			if (res < 0) {
-	            				
-	            			}
-	            			else {
-	            				// If there is any read data, copy it to the broadcast queue
-	            				if (1 < res) {
-	            					broadcastQueue.offer(new AudioData(buf));
-	            					buf.clear();
-	            				}
-	            				
-	            				// Continue reading data on channel
-	            				ch.read(buf, attachment, this);
-	            			}
-	            		}
-	            			
-	            		@Override
-	            		public void failed(Throwable exc, Void attachment) {
-	            			if (exc instanceof ClosedChannelException) {
-	            				Logger.getGlobal().log(Level.INFO,
-	    	            			"A channel connection was closed", exc.getMessage());
-	            				clients.remove(ch);
-	            			}
-	            			else Logger.getGlobal().log(Level.SEVERE,
-	            				"Error on reading data with a client", exc.getMessage());
-	            		}
-	            	});
-
 	            	// Accept the next connection
 	            	sSockChan.accept(null, this);
 	            }
@@ -191,20 +223,39 @@ public class Server implements Callable<Boolean> {
         	});
 
             ExecutorService executor = Executors.newSingleThreadExecutor();
-            Future<Boolean> future = executor.submit(new Broadcaster(this.clients, this.broadcastQueue));
-            Logger.getGlobal().log(Level.INFO, "Server started with port number " + port + ".");
-            Boolean result = future.get();
-            
+            executor.submit(new Broadcaster(this.clients, this.broadcastQueue));
+            Logger.getGlobal().log(Level.INFO, "Server started listening with port number " + port + ".");
+
+        	return this.isAlive;
+        	
         } catch (IOException exc) {
         	Logger.getGlobal().log(Level.SEVERE, "Error on initiating socket (port number " + port + ")");
-            throw new Exception("Error " + exc);
+            this.isAlive = false;
+            
+            return false;
         }
-        
     }
     
-    public Boolean start() {
-        ExecutorService executor = Executors.newCachedThreadPool();
-        Future<Boolean> future = executor.submit(new Broadcaster(this.clients, this.broadcastQueue));
-        Boolean result = future.get();
+    public void close() {
+    
+    	this.isAlive = false;
+    	
+    	try {
+			this.sSockChan.close();
+			this.clients.forEach((id, nc) -> { nc.closeChannel(); });
+			this.clients.clear();
+			
+	    	// ConcurrentLinkedQueue doesn't support clear() method.
+	    	while (!this.broadcastQueue.isEmpty()) this.broadcastQueue.poll();
+	    	
+	    	this.sSockChan = null;
+	    	this.clients = null;
+	    	this.broadcastQueue = null;
+	    	
+		} catch (IOException e) {
+			Logger.getGlobal().log(Level.SEVERE,
+				"Error occurred on shutdown server operation: ", e.getMessage());
+		}
     }
+    
 }
