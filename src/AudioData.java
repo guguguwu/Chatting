@@ -1,14 +1,4 @@
-import java.io.Serializable;
-import java.net.Socket;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.CharBuffer;
-import java.nio.DoubleBuffer;
-import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
-import java.nio.LongBuffer;
-import java.nio.ShortBuffer;
-import java.net.Inet4Address;
 
 // TLV(Type-Length-Value) message + long integer for identification
 public class AudioData {
@@ -17,6 +7,11 @@ public class AudioData {
 	public static class MessageType {
 		public static final int TEXT = 0;
 		public static final int AUDIO = 1;
+		
+		public static final int USER_JOINED = 101;
+		public static final int USER_LEFT	= 102;
+		public static final int USER_CHANGED_NICK 	= 103;
+		public static final int USER_CHANGED_STATUS	= 104;
 	}
 	
 	// Byte position constant

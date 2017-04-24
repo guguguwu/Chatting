@@ -14,7 +14,7 @@ import java.nio.channels.CompletionHandler;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Callable;
-import java.util.concurrent.Future;
+//import java.util.concurrent.Future;
 
 // Classes for inner containers
 import java.util.Map;
@@ -28,13 +28,12 @@ import java.util.logging.Logger;
 
 public class Server {
 
-    private class NetworkConnection {
+    private class ClientConnection {
     	
     	private AsynchronousSocketChannel channel;
-    	private Future<Integer> readFuture;
     	private long id;
     	
-    	public NetworkConnection(AsynchronousSocketChannel chan) throws IOException {
+    	public ClientConnection(AsynchronousSocketChannel chan) throws IOException {
     		
     		this.channel = chan;
     		InetSocketAddress a = ((InetSocketAddress) chan.getRemoteAddress());
@@ -82,11 +81,11 @@ public class Server {
     	private Boolean isTerminatedNormally = Boolean.TRUE;
 
     	// Reference pointer for accessing
-    	private Map<Long, NetworkConnection> 	clients;
+    	private Map<Long, ClientConnection> 	clients;
     	private Queue<AudioData> 				queue;
 
     	public Broadcaster(
-    			Map<Long, NetworkConnection> clients,
+    			Map<Long, ClientConnection> clients,
     			Queue<AudioData> queue) {
     		this.clients = clients;
     		this.queue = queue;
@@ -109,7 +108,7 @@ public class Server {
 				
 				/* deactivated
 				 * 
-					NetworkConnection client;
+					ClientConnection client;
 					// Descending order due to obtaining performance
 					for (int i = this.clients.size() - 1 ; 0 <= i ; i--) {
 						client = this.clients.get(i);
@@ -135,10 +134,10 @@ public class Server {
     	
     }
     
-	// Using ArrayList rather than LinkedList is more beneficial in common situations,
+    // Using ArrayList rather than LinkedList is more beneficial in common situations,
     // (ref.) http://stackoverflow.com/questions/322715/when-to-use-linkedlist-over-arraylist)
     // But in this situation I'd use ConcurrentHashMap.
-    private Map<Long, NetworkConnection> clients;
+    private Map<Long, ClientConnection> clients;
     
     // I decided to use ConcurrentLinkedQueue instead of LinkedTransferQueue.
     // (LinkedTransferQueue is blocking queue)
@@ -149,91 +148,85 @@ public class Server {
     private boolean isAlive = true;
     private int 	port;
     
-    public Server(int port) {
+    public Server(int port) throws IOException {
+    
+    	this.sSockChan = AsynchronousServerSocketChannel.open().bind(new InetSocketAddress(this.port));
     	this.port = port;
+    	
     }
     public int getPort() 	{ return this.port; }
     
     public boolean start() {
-        try {
-        	this.clients 		= new ConcurrentHashMap<Long, NetworkConnection>();
-        	this.broadcastQueue = new ConcurrentLinkedQueue<AudioData>();
+
+    	this.clients 		= new ConcurrentHashMap<Long, ClientConnection>();
+    	this.broadcastQueue = new ConcurrentLinkedQueue<AudioData>();
+    	
+    	this.sSockChan.accept(null, new CompletionHandler<AsynchronousSocketChannel, Void> () {
         	
-        	this.sSockChan = AsynchronousServerSocketChannel.open().bind(new InetSocketAddress(this.port));
-        	this.sSockChan.accept(null, new CompletionHandler<AsynchronousSocketChannel, Void> () {
+            @Override
+            public void completed(AsynchronousSocketChannel ch, Void attachment) {
             	
-	            @Override
-	            public void completed(AsynchronousSocketChannel ch, Void attachment) {
-	            	
+            	// Allocate receiving data buffer, and handle this connection
+            	Logger.getGlobal().log(Level.INFO, "Established a connection ");
+				try {
+					ClientConnection cc = new ClientConnection(ch);
+					clients.putIfAbsent(cc.getId(), cc);
 					
-	            	
-	            	// Allocate receiving data buffer, and handle this connection
-	            	Logger.getGlobal().log(Level.INFO, "Established a connection ");
-					try {
-						NetworkConnection nc = new NetworkConnection(ch);
-						clients.putIfAbsent(nc.getId(), nc);
-						
-		            	ByteBuffer buf = ByteBuffer.allocate(88200);
-		            	ch.read(buf, attachment, new CompletionHandler<Integer, Void>() {
-		            		
-		            		@Override
-		            		public void completed(Integer res, Void attachment) {
+	            	ByteBuffer buf = ByteBuffer.allocate(88200);
+	            	ch.read(buf, attachment, new CompletionHandler<Integer, Void>() {
+	            		
+	            		@Override
+	            		public void completed(Integer res, Void attachment) {
 
-		            			// End of Stream ; connection is disconnected
-		            			if (res < 0) {
-		            				
-		            			}
-		            			else {
-		            				// If there is any read data, copy it to the broadcast queue
-		            				if (1 < res) {
-		            					broadcastQueue.offer(new AudioData(buf));
-		            					buf.clear();
-		            				}
-		            				
-		            				// Continue reading data on channel
-		            				ch.read(buf, attachment, this);
-		            			}
-		            		}
-		            			
-		            		@Override
-		            		public void failed(Throwable exc, Void attachment) {
-		            			if (isAlive && exc instanceof ClosedChannelException) {
-		            				Logger.getGlobal().log(Level.INFO,
-		    	            			"A channel connection was closed", exc.getMessage());
-		            				clients.remove(ch);
-		            			}
-		            			else Logger.getGlobal().log(Level.SEVERE,
-		            				"Error on reading data with a client", exc.getMessage());
-		            		}
-		            	});
-						
-					} catch (IOException e) {
-						Logger.getGlobal().log(Level.SEVERE,
-	            			"Error on receiving remote address of connection", e.getMessage());
-					}
+	            			// End of Stream ; connection is disconnected
+	            			if (res < 0) {
+	            				
+	            			}
+	            			else {
+	            				// If there is any read data, copy it to the broadcast queue
+	            				if (1 < res) {
+	            					broadcastQueue.offer(new AudioData(buf));
+	            					buf.clear();
+	            				}
+	            				
+	            				// Continue reading data on channel
+	            				ch.read(buf, attachment, this);
+	            			}
+	            		}
+	            			
+	            		@Override
+	            		public void failed(Throwable exc, Void attachment) {
+	            			if (isAlive && exc instanceof ClosedChannelException) {
+	            				Logger.getGlobal().log(Level.INFO,
+	    	            			"A channel connection was closed", exc.getMessage());
+	            				clients.remove(ch);
+	            			}
+	            			else Logger.getGlobal().log(Level.SEVERE,
+	            				"Error on reading data with a client", exc.getMessage());
+	            		}
+	            	});
 					
-	            	// Accept the next connection
-	            	sSockChan.accept(null, this);
-	            }
-            
-	            @Override
-	            public void failed(Throwable exc, Void attachment) {
-	            	Logger.getGlobal().log(Level.SEVERE, "Error on establishing connection with a client", exc.getMessage());
-	            }
-        	});
+				} catch (IOException e) {
+					Logger.getGlobal().log(Level.SEVERE,
+            			"Error on receiving remote address of connection", e.getMessage());
+				}
+				
+            	// Accept the next connection
+            	sSockChan.accept(null, this);
+            }
+        
+            @Override
+            public void failed(Throwable exc, Void attachment) {
+            	Logger.getGlobal().log(Level.SEVERE, "Error on establishing connection with a client", exc.getMessage());
+            }
+    	});
 
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            executor.submit(new Broadcaster(this.clients, this.broadcastQueue));
-            Logger.getGlobal().log(Level.INFO, "Server started listening with port number " + port + ".");
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executor.submit(new Broadcaster(this.clients, this.broadcastQueue));
+        Logger.getGlobal().log(Level.INFO, "Server started listening with port number " + port + ".");
 
-        	return this.isAlive;
-        	
-        } catch (IOException exc) {
-        	Logger.getGlobal().log(Level.SEVERE, "Error on initiating socket (port number " + port + ")");
-            this.isAlive = false;
-            
-            return false;
-        }
+    	return this.isAlive;
+
     }
     
     public void close() {

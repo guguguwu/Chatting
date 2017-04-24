@@ -1,9 +1,12 @@
+import java.nio.channels.CompletionHandler;
+
 import javafx.application.Application;
 import javafx.event.ActionEvent;
+import javafx.event.EventHandler;
 import javafx.scene.Scene;
 
 import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
+//import javafx.scene.control.Button;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
@@ -22,39 +25,56 @@ public class MainForm extends Application {
 		{ "도구(_T)", "설정(_P).." }
 	};
 	
-	/*
+	
 	// method reference array
-	private final Runnable[][] menuItemMethods =
+	@SuppressWarnings("rawtypes")
+	private final EventHandler[][] menuItemMethods =
 	{
-		{ null, () -> BeginConnect() },
-		{ null, () -> Preferences() }
+		{ new BeginConnect() },
+		{ new Preferences() }
 	};
 	
 	// private methods
-	private EventHandler<ActionEvent> BeginConnect()
-	{
-		return null;
-		
+	private class BeginConnect implements EventHandler<ActionEvent> {
+		@Override
+		public void handle(ActionEvent e) {
+			StartCapture();
+		}
 	}
 	
-	private void Preferences()
-	{
-		
+	private class Preferences implements EventHandler<ActionEvent> {
+		@Override
+		public void handle(ActionEvent e) {
+			
+		}
 	}
-	*/
+	/// end of private methods
 	
 	// Start capturing audio.
 	public void StartCapture() {
-		CaptureAudio ca = new CaptureAudio();
-
 		try {
-			ca.Capture();
+			Server server = new Server(0);
+			NetworkConnection nc = new NetworkConnection
+				(new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), server.getPort()));
+			nc.beginConnect(new CompletionHandler<Void, Void>() {
+
+				@Override
+				public void completed(Void result, Void attachment) {
+					AudioDataHandler dataHandler = new AudioDataHandler(nc);
+				}
+
+				@Override
+				public void failed(Throwable exc, Void attachment) {
+					
+				}
+			});
 		} catch (Exception e) {
 			new Alert(Alert.AlertType.ERROR, e.getMessage()).showAndWait();
 		}
 	}
 
 	@Override
+	@SuppressWarnings("unchecked")
 	public void start(Stage primaryStage) throws Exception {
 		
 		// Start constructing main form. 
@@ -77,11 +97,13 @@ public class MainForm extends Application {
 				MenuItem tempItem = new MenuItem(priMenuStrings[i][j]);
 				//tempItem.setOnAction((ActionEvent e) -> menuItemMethods[i][j] );
 				priMenu[i].getItems().add(tempItem);
+				priMenu[i].getItems().get(j - 1).setOnAction
+					((EventHandler<ActionEvent>) menuItemMethods[i][j - 1]);
 			}
 		}
 		
 		// custom code
-		priMenu[0].getItems().get(0).setOnAction((ActionEvent e) -> { StartCapture(); });
+		//priMenu[0].getItems().get(0).setOnAction((ActionEvent e) -> { StartCapture(); });
 		
 		Scene scene = new Scene(pane, 640, 480);
 		
