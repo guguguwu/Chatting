@@ -3,7 +3,9 @@ public final class ConstString {
 
 	public static final String defaultTitle = "Voice Chatting";
 	public static final String version		= "1.0.0";
-
+	
+	public static final int	defaultPort = 51252;
+	
 	public static final class Error {
 
 		public static final String NoOutput = "Cannot be supported by any system output.";

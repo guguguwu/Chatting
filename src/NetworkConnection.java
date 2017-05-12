@@ -30,8 +30,10 @@ public class NetworkConnection {
 		this.channel.connect(remoteAddr);
 	}
 	
-	public void beginConnect(CompletionHandler<Void, Void> handler) throws UnresolvedAddressException,
+	// related to dialog action
+	public void beginConnect(CompletionHandler<Void, Object> handler) throws UnresolvedAddressException,
 		UnsupportedAddressTypeException, AlreadyConnectedException, ConnectionPendingException, ShutdownChannelGroupException {
+
 		this.channel.connect(remoteAddr, null, handler);
 	}
 	

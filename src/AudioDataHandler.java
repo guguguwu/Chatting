@@ -1,3 +1,4 @@
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.CompletionHandler;
 
@@ -13,6 +14,8 @@ import java.util.logging.Logger;
 
 public class AudioDataHandler {
 
+	// some unused fields now, but is to be improved.
+	@SuppressWarnings("unused")
 	private class ActiveUser {
 
 		private long 	id;
@@ -35,6 +38,7 @@ public class AudioDataHandler {
 					break;
 				case (AudioData.MessageType.AUDIO):
 					outputObject.write(data.getData(), AudioData.BytePos.VAL_POS, data.getLength());
+					break;
 				// may place visually 'decorating' method after.
 			}
 		}
@@ -67,6 +71,9 @@ public class AudioDataHandler {
 	        	
 	        	@Override
 	        	public Boolean call() {
+	        		// send initial user data
+	        		
+	        	
 	        		while (isAlive) {
 	        			ac.read(this.nBuf, 0, ac.available());
 	        			connection.write(captureBuf);
@@ -82,6 +89,8 @@ public class AudioDataHandler {
 				
 				@Override 
 				public void completed(Integer res, Void attachment) {
+					if (!isAlive) return;
+					
 					AudioData ad = new AudioData(playbackBuf);
 					
 					long id = ad.getId();
@@ -102,8 +111,29 @@ public class AudioDataHandler {
 			});
 			
 		} catch (Exception e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+	}
+	
+	public void stop() throws IOException {
+		if (isAlive) {
+			userlist.forEach((id, nc) -> { nc = null; });
+			userlist.clear();
+			userlist = null;
+			
+			ap.stop();
+			ap = null;
+			ac.stop();
+			ac = null;
+			
+			// Network connection must be closed on more parent-like class
+			isAlive = false;
+		}
+	}
+	
+	@Override
+	protected void finalize() throws Throwable {
+		this.stop();
+		super.finalize();
 	}
 }

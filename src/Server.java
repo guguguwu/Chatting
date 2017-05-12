@@ -149,9 +149,9 @@ public class Server {
     private int 	port;
     
     public Server(int port) throws IOException {
-    
-    	this.sSockChan = AsynchronousServerSocketChannel.open().bind(new InetSocketAddress(this.port));
+
     	this.port = port;
+    	this.sSockChan = AsynchronousServerSocketChannel.open().bind(new InetSocketAddress(this.port));
     	
     }
     public int getPort() 	{ return this.port; }
@@ -235,7 +235,9 @@ public class Server {
     	
     	try {
 			this.sSockChan.close();
-			this.clients.forEach((id, nc) -> { nc.closeChannel(); });
+			this.clients.forEach((id, nc) -> {
+				if (nc != null && nc.isOpen()) nc.closeChannel();
+			});
 			this.clients.clear();
 			
 	    	// ConcurrentLinkedQueue doesn't support clear() method.
@@ -251,4 +253,9 @@ public class Server {
 		}
     }
     
+    @Override
+    protected void finalize() throws Throwable {
+    	this.close();
+    	super.finalize();
+    }
 }
